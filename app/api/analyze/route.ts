@@ -1,4 +1,3 @@
-// app/api/analyze/route.ts
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
@@ -9,15 +8,14 @@ export async function POST(req: Request) {
 
     let processedContent = logText;
 
-    // If file is larger than 50KB, we start "Smart Snipping"
+    // Smart Snipping (RAG-lite)
     if (logText.length > 50000) {
       const lines = logText.split('\n');
       const importantLines = new Set<number>();
-      const keywords = [/error/i, /critical/i, /exception/i, /fatal/i, /500/i];
+      const keywords = [/error/i, /critical/i, /exception/i, /fatal/i, /500/i, /warn/i];
 
       lines.forEach((line, index) => {
         if (keywords.some(regex => regex.test(line))) {
-          // Grab 5 lines of context around the error
           for (let i = Math.max(0, index - 5); i <= Math.min(lines.length - 1, index + 5); i++) {
             importantLines.add(i);
           }
@@ -30,7 +28,7 @@ export async function POST(req: Request) {
         .join('\n');
 
       if (processedContent.length === 0) {
-        processedContent = "No explicit errors found in initial scan. Analyzing first 200 lines:\n" + lines.slice(0, 200).join('\n');
+        processedContent = "Analyzing first 300 lines (No critical keywords found):\n" + lines.slice(0, 300).join('\n');
       }
     }
 
@@ -45,23 +43,26 @@ export async function POST(req: Request) {
         stream: true,
         messages: [
           {
-        role: "system",
-        content: `You are a Senior SRE. When providing a fix, ALWAYS include the exact terminal command required inside a markdown code block labeled 'bash' or 'sh'. 
-        Example:
-        Root Cause: Memory leak.
-        Suggested Fix: Restart the service.
-        \`\`\`bash
-        systemctl restart my-service
-        \`\`\`
-        Keep your analysis concise and high-impact.`
-      },
-          { role: "user", content: `LOG SNIPPETS:\n${processedContent}` }
+            role: "system",
+            content: `You are a Senior Site Reliability Engineer (SRE).
+            
+            TASKS:
+            1. SUMMARY: Briefly explain the root cause.
+            2. VISUALS: Mention the count of 'Critical', 'Error', and 'Warning' events found so the UI chart can render.
+            3. ACTIONABLE FIX: Provide the exact terminal command required to fix the issue inside a markdown code block labeled 'bash'.
+            
+            FORMATTING RULES:
+            - Always use code blocks for commands.
+            - Keep descriptions high-impact and concise.
+            - If multiple fixes exist, prioritize the safest one.`
+          },
+          { role: "user", content: `LOG DATA:\n${processedContent}` }
         ],
       }),
     });
 
     return new NextResponse(response.body);
   } catch (error) {
-    return new NextResponse("Error processing large file", { status: 500 });
+    return new NextResponse("Error processing logs", { status: 500 });
   }
 }
