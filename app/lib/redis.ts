@@ -1,14 +1,15 @@
 import Redis from "ioredis";
 
-// Using your provided REDIS_URL from .env
-const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
+// Use the exact same connection string for both Worker and App
+const REDIS_URL = "rediss://default:gQAAAAAAARl1AAIncDEyODkyNDc1ZWY4YTI0MDM5OTVjZDc3N2I4ZmUzZWM4YnAxNzIwNTM@concise-dassie-72053.upstash.io:6379";
 
 const redisOptions = {
-  maxRetriesPerRequest: null, // REQUIRED for BullMQ to prevent crashes
+  maxRetriesPerRequest: null, // Required for BullMQ
   enableReadyCheck: false,
+  tls: { rejectUnauthorized: false }, // Required for Upstash
+  connectTimeout: 10000,
 };
 
-// Global variable to prevent multiple connections during Next.js reloads
 const globalForRedis = global as unknown as { redis: Redis };
 
 export const redis = globalForRedis.redis || new Redis(REDIS_URL, redisOptions);

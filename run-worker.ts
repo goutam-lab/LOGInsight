@@ -1,23 +1,20 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import { Worker } from "bullmq";
 import { redis } from "./app/lib/redis";
 import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
 
-dotenv.config();
-
-// Initializing Supabase with your project URL
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use Service Role Key for backend access
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
-
-console.log("🚀 LogInsight Worker is active and waiting for logs...");
 
 const worker = new Worker(
   "analysis-queue",
   async (job) => {
-    const { content, fileName, userId } = job.data;
-    console.log(`🔍 Processing Log: ${fileName}`);
+    // This log will tell us the worker is actually moving
+    console.log(`🚀 WORKER DETECTED JOB: ${job.id} for file: ${job.data.fileName}`);
 
     try {
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -30,26 +27,26 @@ const worker = new Worker(
           model: "openrouter/hunter-alpha",
           messages: [
             { role: "system", content: "You are a Senior SRE. Analyze the logs and provide a fix." },
-            { role: "user", content }
+            { role: "user", content: job.data.content }
           ],
         }),
       });
 
       const result = await response.json();
-      const analysisText = result.choices[0].message.content;
+      const analysisText = result.choices?.[0]?.message?.content || "No analysis generated.";
 
-      // Save the result back to your analysis_history table
       await supabase.from("analysis_history").insert({
-        file_name: fileName,
+        file_name: job.data.fileName,
         analysis_content: analysisText,
-        user_id: userId,
+        user_id: job.data.userId,
       });
 
-      console.log(`✅ Analysis complete for ${fileName}`);
+      console.log(`✅ Analysis complete for ${job.data.fileName}`);
     } catch (err) {
-      console.error("❌ Worker Job Failed:", err);
-      throw err;
+      console.error(`❌ Worker Job ${job.id} Failed:`, err);
     }
   },
-  { connection: redis }
+  { connection: redis as any } // Use the exact same redis instance
 );
+
+worker.on('ready', () => console.log("🚀 LogInsight Worker is active and connected to Upstash!"));
