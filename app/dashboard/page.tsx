@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+// Import createBrowserClient for Next.js SSR compatibility
 import { createBrowserClient } from "@supabase/ssr";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Upload, Terminal, Shield, LogOut, Copy, Check, 
-  History, BarChart3, Terminal as Console, Users 
+  Upload, Shield, LogOut, Copy, Check, 
+  History, BarChart3, Terminal as Console, Users, Loader2
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, 
@@ -20,8 +21,11 @@ export default function Dashboard() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"idle" | "processing" | "completed" | "error">("idle");
   
   const router = useRouter();
+  
+  // Initialize the browser-specific Supabase client
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -39,8 +43,45 @@ export default function Dashboard() {
     init();
   }, []);
 
+  // Polling logic to check for the worker's result in Supabase
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+
+    if (status === "processing" && fileName && user) {
+      interval = setInterval(async () => {
+        try {
+          // Use maybeSingle() to avoid 406 errors if the record doesn't exist yet
+          const { data, error } = await supabase
+            .from("analysis_history")
+            .select("*")
+            .eq("file_name", fileName)
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (error) {
+            console.error("Polling error:", error.message);
+            return;
+          }
+
+          if (data && data.analysis_content) {
+            setAnalysis(data.analysis_content);
+            setStatus("completed");
+            setLoading(false);
+            fetchHistory(user.id);
+            clearInterval(interval);
+          }
+        } catch (err) {
+          console.error("Unexpected polling error:", err);
+        }
+      }, 3000); // Poll every 3 seconds
+    }
+
+    return () => clearInterval(interval);
+  }, [status, fileName, user]);
+
   const fetchHistory = async (userId: string) => {
-    // Team Workspace: Fetches scans for the user's ID or their organization_id
     const { data } = await supabase
       .from("analysis_history")
       .select("*")
@@ -48,56 +89,42 @@ export default function Dashboard() {
     if (data) setHistory(data);
   };
 
-  const saveAnalysis = async (name: string, content: string) => {
-    await supabase.from("analysis_history").insert([
-      { 
-        file_name: name, 
-        analysis_content: content, 
-        user_id: user?.id 
-      }
-    ]);
-    if (user) fetchHistory(user.id);
-  };
-
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
     setFileName(file.name);
     setLoading(true);
+    setStatus("processing");
     setAnalysis(""); 
 
-    const formData = new FormData();
-    formData.append("file", file);
+    const content = await file.text();
 
-    const response = await fetch("/api/analyze", { method: "POST", body: formData });
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
+    try {
+      // Send data to the ingest API for background processing
+      const response = await fetch("/api/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          log_content: content,
+          metadata: {
+            fileName: file.name,
+            userId: user.id
+          }
+        })
+      });
 
-    let fullContent = "";
-    while (reader) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value);
-      const lines = chunk.split("\n");
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const json = JSON.parse(line.slice(6));
-            const content = json.choices[0]?.delta?.content;
-            if (content) {
-              setAnalysis((prev) => prev + content);
-              fullContent += content;
-            }
-          } catch (e) {}
-        }
-      }
+      if (!response.ok) throw new Error("Ingestion failed");
+      
+      const data = await response.json();
+      console.log("Job queued successfully:", data.jobId);
+    } catch (err) {
+      console.error("Upload error:", err);
+      setStatus("error");
+      setLoading(false);
     }
-    setLoading(false);
-    if (fullContent) saveAnalysis(file.name, fullContent);
   };
 
-  // Extract Mock Data for Chart from AI response (Visual Diagnostics)
   const chartData = useMemo(() => {
     return [
       { name: 'Critical', value: (analysis.match(/critical/gi) || []).length },
@@ -126,7 +153,6 @@ export default function Dashboard() {
       </nav>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar: Persistence Logic */}
         <aside className="w-72 border-r border-slate-800 bg-slate-950/50 p-6 hidden lg:block overflow-y-auto">
           <div className="flex items-center gap-2 mb-6 text-slate-400">
             <History size={16} />
@@ -137,7 +163,7 @@ export default function Dashboard() {
             {history.map((item) => (
               <button 
                 key={item.id}
-                onClick={() => { setAnalysis(item.analysis_content); setFileName(item.file_name); }}
+                onClick={() => { setAnalysis(item.analysis_content); setFileName(item.file_name); setStatus("completed"); }}
                 className="w-full text-left p-4 rounded-2xl bg-slate-900/40 border border-slate-800 hover:border-blue-500/50 transition-all group"
               >
                 <p className="text-sm font-semibold text-slate-200 truncate">{item.file_name}</p>
@@ -152,13 +178,13 @@ export default function Dashboard() {
             <div className="bg-slate-900/40 border border-slate-800 p-10 rounded-[2.5rem] text-center relative overflow-hidden">
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-24 bg-blue-600/10 blur-[100px]" />
               <h1 className="text-3xl font-bold text-white mb-2">System Diagnostic</h1>
-              <p className="text-slate-500 mb-8">Upload infrastructure logs for AI-powered hunter-alpha analysis.</p>
+              <p className="text-slate-500 mb-8">Upload infrastructure logs for background AI analysis.</p>
               
               <div className="relative inline-block">
                 <input type="file" onChange={handleUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" disabled={loading} />
                 <button className={`px-10 py-4 rounded-2xl font-bold flex items-center gap-3 transition-all ${loading ? 'bg-slate-800 text-slate-500' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-900/20'}`}>
-                  {loading ? <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent animate-spin rounded-full" /> : <Upload size={20} />}
-                  {loading ? "Analyzing Stream..." : "Deploy Hunter-Alpha"}
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload size={20} />}
+                  {status === "processing" ? "Processing in Background..." : "Deploy Hunter-Alpha"}
                 </button>
               </div>
             </div>
@@ -166,8 +192,6 @@ export default function Dashboard() {
             <AnimatePresence>
               {analysis && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                  
-                  {/* Visual Diagnostics: Charts */}
                   {chartData.length > 0 && (
                     <div className="bg-slate-950 border border-slate-800 rounded-3xl p-6">
                       <div className="flex items-center gap-2 mb-6">
@@ -195,7 +219,6 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  {/* Actionable Insights: The Output */}
                   <div className="bg-slate-950 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
                     <div className="bg-slate-900/50 px-6 py-4 flex items-center justify-between border-b border-slate-800">
                       <div className="flex items-center gap-2">
@@ -210,8 +233,6 @@ export default function Dashboard() {
                       </button>
                     </div>
                     <div className="p-8 font-mono text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
-                      {/* Note: The UI naturally renders markdown code blocks if you use a library like react-markdown. 
-                          For simplicity here, we rely on the system prompt forcing the AI to use clear blocks. */}
                       {analysis}
                     </div>
                   </div>
