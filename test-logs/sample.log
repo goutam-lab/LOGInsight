@@ -1,0 +1,14 @@
+2026-04-20 10:15:01 [INFO] Application started on port 8080
+2026-04-20 10:15:02 [INFO] Connected to database cluster db-prod-01
+2026-04-20 10:15:05 [WARNING] High memory usage detected: 85% utilized
+2026-04-20 10:15:10 [ERROR] Connection timeout to Redis cache at 10.0.0.5:6379 after 30s
+2026-04-20 10:15:12 [ERROR] Failed to fetch user session: ETIMEDOUT
+2026-04-20 10:15:15 [CRITICAL] Database connection pool exhausted - max 100 connections reached
+2026-04-20 10:15:16 [ERROR] Request failed: POST /api/checkout - 503 Service Unavailable
+2026-04-20 10:15:18 [CRITICAL] OOM Killer invoked: Process node (PID 2847) killed - RSS 2.1GB exceeds limit
+2026-04-20 10:15:20 [WARNING] Disk usage at 92% on /var/log partition
+2026-04-20 10:15:22 [ERROR] SSL certificate expiring in 3 days for api.example.com
+2026-04-20 10:15:25 [WARNING] Rate limiter triggered for IP 203.0.113.42 - 500 req/min exceeded
+2026-04-20 10:15:30 [INFO] Health check passed for service auth-service
+2026-04-20 10:15:35 [ERROR] Null pointer exception in UserController.getProfile() at line 142
+2026-04-20 10:15:40 [CRITICAL] Master database failover initiated - switching to replica db-prod-02

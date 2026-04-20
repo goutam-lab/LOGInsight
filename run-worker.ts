@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { Worker } from "bullmq";
-import { redis } from "./app/lib/redis"; //
+import { redis } from "./app/lib/redis";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -10,7 +10,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-console.log("🚀 LogInsight Worker is starting...");
+// Ollama local LLM configuration
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "deepseek-coder";
+
+console.log(`🚀 LogInsight Worker is starting... (Using ${OLLAMA_MODEL} via Ollama)`);
 
 const worker = new Worker(
   "analysis-queue",
@@ -19,15 +23,14 @@ const worker = new Worker(
     console.log(`🚀 Processing Job ${job.id} for file: ${fileName}`);
 
     try {
-      // 1. AI Analysis Logic (Moved from API to Worker for stability)
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      // 1. AI Analysis via Local Ollama LLM
+      const response = await fetch(`${OLLAMA_BASE_URL}/v1/chat/completions`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "openrouter/hunter-alpha",
+          model: OLLAMA_MODEL,
           messages: [
             {
               role: "system",
@@ -37,13 +40,19 @@ const worker = new Worker(
               2. VISUALS: Mention the count of 'Critical', 'Error', and 'Warning' events.
               3. ACTIONABLE FIX: Provide the exact terminal command in a 'bash' markdown block.`
             },
-            { role: "user", content: `LOG DATA:\n${content.slice(0, 15000)}` }
+            { role: "user", content: `LOG DATA:\n${content.slice(0, 4000)}` }
           ],
+          stream: false,
         }),
       });
 
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Ollama API error (${response.status}): ${errText}`);
+      }
+
       const aiData = await response.json();
-      const analysisContent = aiData.choices[0].message.content;
+      const analysisContent = aiData.choices?.[0]?.message?.content || "Analysis failed - no response from LLM";
 
       // 2. Insert into Supabase (This triggers the Realtime broadcast)
       const { error } = await supabase
